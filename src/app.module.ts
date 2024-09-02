@@ -4,6 +4,8 @@ import { MongooseModule } from "@nestjs/mongoose";
 import { AuthModule } from "./auth/auth.module";
 import { ProductsModule } from "./products/products.module";
 import { UsersModule } from "./users/users.module";
+import { AdminController } from './admin/admin.controller';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -14,8 +16,9 @@ import { UsersModule } from "./users/users.module";
     UsersModule,
     ProductsModule,
     MongooseModule.forRoot(process.env.DATABASE_URL),
+    AdminModule,
   ],
-  controllers: [],
+  controllers: [AdminController],
   providers: [],
 })
 export class AppModule {}

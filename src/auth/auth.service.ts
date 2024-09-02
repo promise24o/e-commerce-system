@@ -8,6 +8,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { InvalidCredentialsError } from './errors/invalid-credentials.error';
 import { UserAlreadyExistsError } from './errors/user-already-exists.error';
+import { UserBannedError } from './errors/user-banned.error';
 import { JwtPayload } from './jwt-payload.interface';
 
 @Injectable()
@@ -47,8 +48,16 @@ export class AuthService {
     // Find user by email using Mongoose
     const user = await this.userModel.findOne({ email }).exec();
 
-    // Check if user exists and if password matches
-    if (!user || !(await bcrypt.compare(password, user.password))) {
+    // Check if user exists, if password matches, and if user is banned
+    if (!user) {
+      throw new InvalidCredentialsError();
+    }
+
+    if (user.isBanned) {
+      throw new UserBannedError(); // Throw an error if the user is banned
+    }
+
+    if (!(await bcrypt.compare(password, user.password))) {
       throw new InvalidCredentialsError();
     }
 
