@@ -8,10 +8,17 @@ import {
   Param,
   Post,
   Put,
-  Query,
   Request,
+  UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from "@nestjs/swagger";
+import { Product } from "src/schemas/product.schema";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { Role } from "../auth/enums/role.enum";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -21,11 +28,19 @@ import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { ProductsService } from "./products.service";
 
+@ApiBearerAuth()
+@ApiTags("products")
 @Controller("products")
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
-  // Authenticated users can create products
+  @ApiOperation({ summary: "Create a product" })
+  @ApiResponse({
+    status: 201,
+    description: "The product has been successfully created.",
+    type: Product,
+  })
+  @ApiResponse({ status: 403, description: "Forbidden." })
   @UseGuards(JwtAuthGuard)
   @Post()
   async create(
@@ -36,18 +51,24 @@ export class ProductsController {
     return this.productsService.create(createProductDto, userId);
   }
 
-  // Authenticated users can update their own products
-  @Put(":id")
+  @ApiOperation({ summary: "Update a product" })
+  @ApiResponse({
+    status: 200,
+    description: "The product has been successfully updated.",
+    type: Product,
+  })
+  @ApiResponse({ status: 404, description: "Product not found." })
+  @ApiResponse({ status: 403, description: "Forbidden." })
   @UseGuards(JwtAuthGuard)
+  @Put(":id")
   async update(
     @Param("id") id: string,
     @Body() updateProductDto: UpdateProductDto,
     @Request() req: any
   ) {
-    const userId = req.user.userId; // Extract userId from JWT
-    const product = await this.productsService.findOne(id, true);
+    const userId = req.user.userId;
+    const product = await this.productsService.findOne(id, userId, true);
 
-    // Ensure that only the owner can update their product
     if (!product) {
       throw new NotFoundException("Product not found.");
     }
@@ -61,14 +82,19 @@ export class ProductsController {
     return this.productsService.update(id, updateProductDto, userId);
   }
 
-  // Authenticated users can delete their own products
-  @Delete(":id")
+  @ApiOperation({ summary: "Delete a product" })
+  @ApiResponse({
+    status: 200,
+    description: "The product has been successfully deleted.",
+  })
+  @ApiResponse({ status: 404, description: "Product not found." })
+  @ApiResponse({ status: 403, description: "Forbidden." })
   @UseGuards(JwtAuthGuard)
+  @Delete(":id")
   async delete(@Param("id") id: string, @Request() req: any) {
-    const userId = req.user.userId; // Extract userId from JWT
-    const product = await this.productsService.findOne(id, true);
+    const userId = req.user.userId;
+    const product = await this.productsService.findOne(id, userId, true);
 
-    // Ensure that only the owner can delete their product
     if (!product) {
       throw new NotFoundException("Product not found.");
     }
@@ -82,9 +108,16 @@ export class ProductsController {
     return this.productsService.delete(id, userId);
   }
 
-  @Put(":id/approve")
+  @ApiOperation({ summary: "Approve or disapprove a product" })
+  @ApiResponse({
+    status: 200,
+    description: "The product has been successfully approved or disapproved.",
+    type: Product,
+  })
+  @ApiResponse({ status: 403, description: "Forbidden." })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin)
+  @Put(":id/approve")
   async approveProduct(
     @Param("id") id: string,
     @Body() approveProductDto: ApproveProductDto
@@ -95,44 +128,77 @@ export class ProductsController {
     );
   }
 
-  // Unauthenticated and authenticated users can view all approved products
-  @Get()
-  async findAll(@Query("approved") approved: string, @Request() req: any) {
-    const isAuthenticated = req.user && req.user.userId;
-    const approvedAsBoolean = approved === "true";
-
-    if (approvedAsBoolean && !isAuthenticated) {
-      // If not authenticated and requesting approved products
-      return this.productsService.findAll(true);
-    }
-
-    if (!approvedAsBoolean && isAuthenticated) {
-      // If authenticated and requesting non-approved products (admin or owner)
-      return this.productsService.findAll(false);
-    }
-
-    // Default case: return only approved products if authenticated or not
+  @ApiOperation({ summary: "Find all products" })
+  @ApiResponse({
+    status: 200,
+    description: "List of products.",
+    type: [Product],
+  })
+  @Get("public")
+  async findAllPublic() {
     return this.productsService.findAll(true);
   }
 
-  // Unauthenticated and authenticated users can view a single approved product
+  @ApiOperation({
+    summary: "Find all products with optional filter for approved products",
+  })
+  @ApiResponse({
+    status: 200,
+    description: "List of products.",
+    type: [Product],
+  })
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  async findAll(@Request() req: any) {
+    const user = req.user;
+    const isAdmin = user && user.role === "admin";
+
+    if (isAdmin) {
+      return this.productsService.findAll();
+    }
+
+    const userId = user?.userId;
+    if (!userId) {
+      throw new UnauthorizedException();
+    }
+
+    return this.productsService.findByUser(userId);
+  }
+
+  @ApiOperation({ summary: "Find a single product by ID" })
+  @ApiResponse({
+    status: 200,
+    description: "The product details.",
+    type: Product,
+  })
+  @ApiResponse({ status: 404, description: "Product not found." })
+  @ApiResponse({ status: 403, description: "Forbidden." })
   @Get(":id")
+  @UseGuards(JwtAuthGuard)
   async findOne(@Param("id") id: string, @Request() req: any) {
-    const isAuthenticated = req.user && req.user.userId;
-    const userId = isAuthenticated ? req.user.userId : null;
-    const product = await this.productsService.findOne(id);
+    const user = req.user;
+    const userId = user ? user.userId : null;
+    const isAdmin = user && user.role === Role.Admin; // Check if user is an admin
+
+    // Fetch product with additional check for admin role
+    const product = await this.productsService.findOne(id, userId, isAdmin, false);
 
     if (!product) {
       throw new NotFoundException("Product not found.");
     }
 
-    // Allow owners to view their products regardless of approval status
+    // Admin can access any product
+    if (isAdmin) {
+      return product;
+    }
+
+    // If the user is the owner of the product, they can view it regardless of its approval status
     if (product.ownerId.toString() === userId) {
       return product;
     }
 
-    // Forbid access if the product is not approved and the user is not authenticated
-    if (!product.isApproved && !isAuthenticated) {
+    // If the user is not the owner, check if the product is approved
+    if (!product.isApproved) {
       throw new ForbiddenException(
         "You are not authorized to view this product."
       );
