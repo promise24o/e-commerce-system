@@ -102,5 +102,3 @@ Website - https://nestjs.com
 Twitter - @nestframework
 License
 Nest is MIT licensed.
-
-Feel free to adjust any details according to your project's specifics.
